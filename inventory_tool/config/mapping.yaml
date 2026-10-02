@@ -1,0 +1,66 @@
+# Column mapping and storage-source registry.
+# Adding a new storage source = add a new entry under storage_sources,
+# no code change needed. Sources that are not provided or not mappable are
+# skipped, not the whole pipeline aborted.
+
+bom:
+  sheet_name_candidates: ["Default"]
+  columns:
+    level: ["Level"]
+    number: ["Number"]
+    title: ["Title Local Lang.", "Title", "Description"]
+    quantity: ["Quantity"]
+    critical: ["Critical Part"]
+
+order_list:
+  # Sheet name always starts with this prefix (the version tag, e.g. "A.9", can change)
+  sheet_name_prefix: "ORDER LIST"
+  header_scan_rows: 10
+  columns:
+    part_id: ["Part ID"]
+    sap_id: ["SAP ID"]
+    kanban: ["KANBAN"]
+    supplier: ["Supplier"]
+    order_qty: ["Order qty."]
+    delivery_date: ["Delivery date", "expected avail. Date"]
+    delivery_status: ["delivery status"]
+    order_number: ["Order no."]
+    # "demand covered" (column AG) == "OK" + a stock value in "stock avai.
+    # DECMS..." (column AD) -> additional storage source "main warehouse
+    # (DECMS)", see availability.extract_decms_stock. The DECMS header
+    # carries a date (".../xx.xx.2026") that can change - hence prefix match.
+    demand_covered: ["demand covered"]
+    decms_stock: ["stock avai. DECMS"]
+  # First sub-quantity column under "Phase 1 ..." = demand for one build
+  # unit (e.g. 1 DTB). Context info only, does NOT feed into the
+  # availability calculation.
+  demand_per_unit_label_prefix: "Phase 1"
+
+storage_sources:
+  - id: sap
+    label: "SAP Stock"
+    required: true
+    sheet_name_candidates: ["Sheet1"]
+    columns:
+      material_key: ["Zeugnis-Nr"]
+      quantity: ["Gesamtbestand"]
+      location: ["Lagerplatz"]
+  # Additional storage sources (to follow later): no fixed mapping yet.
+  # Detected on load via generic column heuristics (see
+  # loaders.load_generic_storage_source) and to be filled in here once
+  # their real structure is known.
+  - id: storage_2
+    label: "Storage 2"
+    required: false
+    sheet_name_candidates: []
+    columns: {}
+  - id: storage_3
+    label: "Storage 3"
+    required: false
+    sheet_name_candidates: []
+    columns: {}
+  - id: storage_4
+    label: "Storage 4"
+    required: false
+    sheet_name_candidates: []
+    columns: {}
