@@ -138,40 +138,7 @@ def load_bom(file_path, mapping):
         item_types.append("Assembly" if is_assembly else "Part")
     out["Item_Type"] = item_types
 
-    # Windchill's "Quantity" is per IMMEDIATE parent, not per top-level
-    out["Quantity_Per_Unit"] = _rollup_quantity_per_unit(out["Level"].tolist(), out["Quantity_Per_Unit"].tolist())
-
     return out
-
-
-def _rollup_quantity_per_unit(levels, qty_per_parent):
-    """Cumulative quantity per ONE unit of the top-level assembly.
-
-    Windchill's exported "Quantity" is the quantity per immediate parent
-    occurrence, not already multiplied up to the top level - confirmed
-    against a real multi-level BOM export (an assembly used 2x in its
-    parent, whose own children each carry their per-that-assembly
-    quantity, not the doubled total). A part nested inside a sub-assembly
-    that is itself used N times must have its quantity multiplied by N,
-    and this compounds across however many nested levels sit in between.
-
-    Stack-based roll-up (same principle as the legacy script's qpu
-    calculation): each row's cumulative quantity = its own per-parent
-    quantity x the cumulative quantity of the nearest shallower ancestor
-    still on the stack. The top-level row (nothing shallower) is 1 unit.
-    """
-    n = len(levels)
-    qpu = [0.0] * n
-    stack = []  # row indices, kept so their levels increase bottom-to-top
-    for i in range(n):
-        while stack and levels[stack[-1]] >= levels[i]:
-            stack.pop()
-        if not stack:
-            qpu[i] = 1.0
-        else:
-            qpu[i] = (qty_per_parent[i] or 0.0) * qpu[stack[-1]]
-        stack.append(i)
-    return qpu
 
 
 # ---------------------------------------------------------------------------

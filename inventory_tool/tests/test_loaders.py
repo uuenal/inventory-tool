@@ -50,36 +50,22 @@ class TestLoadBom:
         bom_df = loaders.load_bom(path, mapping)
         assert bom_df.iloc[0]["Material_Number"] == "GCE0920435P0100"
 
-    def test_rolls_up_quantity_through_nested_assembly_multiplier(self, xlsx_path, mapping):
-        # Real-world regression (confirmed against an actual Windchill BOM
-        # export): a sub-assembly used 2x in its parent; its own children's
-        # "Quantity" is per ONE occurrence of that sub-assembly, NOT already
-        # multiplied by the 2 - Windchill never pre-multiplies up the tree.
+    def test_quantity_per_unit_is_the_raw_bom_value_unmultiplied(self, xlsx_path, mapping):
+        # Explicit product decision: the BOM is taken exactly as exported,
+        # row by row - no multiplication through ancestor assembly
+        # quantities. Previously tried a cumulative roll-up here; reverted
+        # because it changed what the BOM's own numbers mean, which must
+        # stay untouched.
         rows = [
             BOM_HEADER,
             [0, "3XAA100000A0001", "Top", None, "No"],
-            [1, "3XAA200000A0001", "Sub (used 2x)", 2, "No"],
-            [2, "3XAA300000P0001", "Leaf (3 per sub)", 3, "No"],
+            [1, "3XAA200000A0001", "Sub (2x)", 2, "No"],
+            [2, "3XAA300000P0001", "Leaf", 3, "No"],
         ]
         path = xlsx_path("Default", rows)
         bom_df = loaders.load_bom(path, mapping)
         leaf = bom_df[bom_df["Material_Number"] == "3XAA300000P0001"].iloc[0]
-        assert leaf["Quantity_Per_Unit"] == 6  # 3 per sub-assembly x 2 occurrences of the sub-assembly
-
-    def test_rolls_up_quantity_through_two_nested_multipliers(self, xlsx_path, mapping):
-        # Confirmed real case: a 2x sub-assembly itself containing another
-        # 2x sub-assembly - factors must compound (2 x 2 = 4), not just add.
-        rows = [
-            BOM_HEADER,
-            [0, "3XAA100000A0001", "Top", None, "No"],
-            [1, "3XAA200000A0001", "Sub A (used 2x)", 2, "No"],
-            [2, "3XAA210000A0001", "Sub B (used 2x within A)", 2, "No"],
-            [3, "3XAA300000P0001", "Leaf (1 per Sub B)", 1, "No"],
-        ]
-        path = xlsx_path("Default", rows)
-        bom_df = loaders.load_bom(path, mapping)
-        leaf = bom_df[bom_df["Material_Number"] == "3XAA300000P0001"].iloc[0]
-        assert leaf["Quantity_Per_Unit"] == 4
+        assert leaf["Quantity_Per_Unit"] == 3
 
 
 SAP_HEADER = ["Material", "Zeugnis-Nr", "Verfügbarer Bestand", "Lagerplatz"]
