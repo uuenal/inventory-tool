@@ -445,3 +445,76 @@ class TestCategorizeLocation:
 
     def test_blank_when_nothing_matched(self):
         assert availability.categorize_location("", "", "SAP Stock") == ""
+
+
+def make_csp_row(material_number, quantity, status):
+    return {"Material_Number": material_number, "Quantity": quantity, "Status": status}
+
+
+class TestSummarizeCspHall:
+    def test_in_hall_quantity_summed_per_material(self):
+        csp_df = pd.DataFrame([
+            make_csp_row("PART000000P0001", 5, "In CSP Hall"),
+            make_csp_row("PART000000P0001", 3, "In CSP Hall"),
+        ])
+        summary = availability.summarize_csp_hall(csp_df)
+        row = summary.iloc[0]
+        assert row["In_Hall_Qty"] == 8
+        assert "8 in CSP Hall" in row["Display"]
+
+    def test_requested_and_kanban_tracked_separately_from_in_hall(self):
+        csp_df = pd.DataFrame([
+            make_csp_row("PART000000P0001", 5, "In CSP Hall"),
+            make_csp_row("PART000000P0001", 2, "Requested"),
+            make_csp_row("PART000000P0001", 1, "Kanban self-pick"),
+        ])
+        summary = availability.summarize_csp_hall(csp_df)
+        row = summary.iloc[0]
+        assert row["In_Hall_Qty"] == 5
+        assert row["Requested_Qty"] == 2
+        assert row["Kanban_Qty"] == 1
+        assert "5 in CSP Hall" in row["Display"]
+        assert "2 requested" in row["Display"]
+        assert "1 Kanban self-pick" in row["Display"]
+
+    def test_cancelled_rows_ignored(self):
+        csp_df = pd.DataFrame([make_csp_row("PART000000P0001", 10, "Cancelled")])
+        summary = availability.summarize_csp_hall(csp_df)
+        row = summary.iloc[0]
+        assert row["In_Hall_Qty"] == 0
+        assert row["Requested_Qty"] == 0
+        assert row["Display"] == ""
+
+    def test_status_matching_is_case_insensitive(self):
+        csp_df = pd.DataFrame([make_csp_row("PART000000P0001", 5, "in csp hall")])
+        summary = availability.summarize_csp_hall(csp_df)
+        assert summary.iloc[0]["In_Hall_Qty"] == 5
+
+    def test_empty_input_returns_empty_frame(self):
+        summary = availability.summarize_csp_hall(None)
+        assert summary.empty
+        summary2 = availability.summarize_csp_hall(pd.DataFrame())
+        assert summary2.empty
+
+
+class TestBuildBomViewCspHall:
+    def test_csp_hall_display_attached_to_matching_part_row(self):
+        bom_df = pd.DataFrame([make_bom_row(0, "Part", "PART000000P0001", row_order=0)])
+        availability_df = pd.DataFrame([
+            {**make_demand_row("PART000000P0001", 1), "Available_Qty": 0, "Gap": 1,
+             "Locations": "", "Sources": "", "Status": "MISSING"},
+        ])
+        csp_summary = availability.summarize_csp_hall(
+            pd.DataFrame([make_csp_row("PART000000P0001", 5, "In CSP Hall")])
+        )
+        view = availability.build_bom_view(bom_df, availability_df, csp_summary=csp_summary)
+        assert "5 in CSP Hall" in view.iloc[0]["CSP_Hall"]
+
+    def test_csp_hall_blank_when_no_summary_given(self):
+        bom_df = pd.DataFrame([make_bom_row(0, "Part", "PART000000P0001", row_order=0)])
+        availability_df = pd.DataFrame([
+            {**make_demand_row("PART000000P0001", 1), "Available_Qty": 1, "Gap": 0,
+             "Locations": "", "Sources": "", "Status": "OK"},
+        ])
+        view = availability.build_bom_view(bom_df, availability_df)
+        assert view.iloc[0]["CSP_Hall"] == ""

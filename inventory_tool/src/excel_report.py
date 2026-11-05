@@ -230,14 +230,14 @@ def create_report(output_path, num_units, bom_view, availability_df, gap_df,
 
     ws_bom = wb.create_sheet("2. Assembly Status")
     bom_display = bom_view[[
-        "Level", "Item_Type", "Material_Number", "Title", "Quantity_Per_Unit",
+        "Level", "Item_Type", "Material_Number", "Title", "Quantity_Per_Unit", "Total_Demand",
         "Status", "Assembly_Readiness", "Ordered", "Available_Qty",
-        "Available_Qty", "Delivery_Date", "Location", "Comment"
+        "Available_Qty", "CSP_Hall", "Location", "Comment"
     ]].copy()
     bom_display.columns = [
-        "Level", "Type", "Material Number", "Description", "Qty/Unit",
+        "Level", "Type", "Material Number", "Description", "Qty/Unit", "Demand Quantity",
         "Status (Part)", "Assembly Status", "Ordered", "Availability in House",
-        "Quantity in House", "Delivery Date", "Location", "Comment"
+        "Quantity in House", "CSP Hall", "Location", "Comment"
     ]
     bom_display["Quantity in House"] = pd.to_numeric(
         bom_display["Quantity in House"], errors="coerce"
@@ -245,6 +245,12 @@ def create_report(output_path, num_units, bom_view, availability_df, gap_df,
     bom_display["Availability in House"] = bom_display["Availability in House"].apply(
         lambda v: "Yes" if (v is not None and not pd.isna(v) and v > 0) else "No"
     )
+    # Demand Quantity is a Part-level concept (assemblies are either built
+    # in-house from their parts or ordered complete) - blank for Assembly
+    # rows rather than a misleading 0, same treatment as Status (Part).
+    bom_display["Demand Quantity"] = pd.to_numeric(
+        bom_display["Demand Quantity"], errors="coerce"
+    ).apply(lambda v: None if pd.isna(v) else v)
 
     # Purely visual staircase columns (H0-H4) placed ahead of everything
     # else - built only from the existing Level column, row order and the

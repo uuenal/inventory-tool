@@ -314,6 +314,47 @@ def extract_decms_stock(order_df, demand_df):
     return pd.DataFrame(rows, columns=["Material_Key", "Quantity", "Location", "Source"]) if rows else empty
 
 
+CSP_IN_HALL_STATUS = "in csp hall"
+CSP_REQUESTED_STATUS = "requested"
+CSP_KANBAN_STATUS = "kanban self-pick"
+
+
+def summarize_csp_hall(csp_df):
+    """Per-material CSP Hall summary for display on the Assembly Status sheet.
+
+    Status values (confirmed from a real CSP Hall export): "In CSP Hall"
+    (physically there), "Requested" (request sent, not yet confirmed by
+    the warehouse), "Kanban self-pick", "Cancelled". Only informational
+    here - NOT wired into compute_availability/Status, since whether
+    "In CSP Hall" quantity should count as available stock is an open
+    business-logic question, not yet confirmed.
+    """
+    columns = ["Material_Number", "In_Hall_Qty", "Requested_Qty", "Kanban_Qty", "Display"]
+    if csp_df is None or csp_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    status_lower = csp_df["Status"].astype(str).str.strip().str.lower()
+    for material, group in csp_df.groupby("Material_Number"):
+        group_status = status_lower.loc[group.index]
+        in_hall = group.loc[group_status == CSP_IN_HALL_STATUS, "Quantity"].sum()
+        requested = group.loc[group_status == CSP_REQUESTED_STATUS, "Quantity"].sum()
+        kanban = group.loc[group_status == CSP_KANBAN_STATUS, "Quantity"].sum()
+        parts = []
+        if in_hall > 0:
+            parts.append(f"{in_hall:g} in CSP Hall")
+        if requested > 0:
+            parts.append(f"{requested:g} requested")
+        if kanban > 0:
+            parts.append(f"{kanban:g} Kanban self-pick")
+        rows.append({
+            "Material_Number": material, "In_Hall_Qty": in_hall,
+            "Requested_Qty": requested, "Kanban_Qty": kanban,
+            "Display": ", ".join(parts),
+        })
+    return pd.DataFrame(rows, columns=columns)
+
+
 ORDERED_EXTERNAL = "ORDERED (EXTERNAL)"
 
 # Statuses that do not block an assembly's internal build readiness: OK
@@ -344,7 +385,7 @@ def categorize_location(sources_str, kanban, sap_label, decms_label=DECMS_SOURCE
     return _unique_join(labels)
 
 
-def build_bom_view(bom_df, availability_df, stock_df=None, sap_label="SAP Stock"):
+def build_bom_view(bom_df, availability_df, stock_df=None, sap_label="SAP Stock", csp_summary=None):
     """Full BOM view with per-row part status + bottom-up assembly readiness.
 
     If bom_df carries the order-context columns from
@@ -364,6 +405,9 @@ def build_bom_view(bom_df, availability_df, stock_df=None, sap_label="SAP Stock"
     has_order_context = "Is_Ordered" in bom_df.columns
     status_by_material = availability_df.set_index("Material_Number")
     stock_lookup = _stock_lookup(stock_df) if stock_df is not None else {}
+    csp_lookup = {}
+    if csp_summary is not None and not csp_summary.empty:
+        csp_lookup = csp_summary.set_index("Material_Number")["Display"].to_dict()
 
     view = bom_df.copy().reset_index(drop=True)
     for col in ["Total_Demand", "Available_Qty", "Gap", "Locations", "Sources", "Status", "Usage_Count"]:
@@ -372,6 +416,7 @@ def build_bom_view(bom_df, availability_df, stock_df=None, sap_label="SAP Stock"
     view["Ordered"] = view["Is_Ordered"].map({True: "Yes", False: "No"}) if has_order_context else ""
     view["Delivery_Date"] = view["Order_Delivery_Date"] if has_order_context else ""
     view["Comment"] = ""
+    view["CSP_Hall"] = view["Material_Number"].map(csp_lookup).fillna("")
 
     for idx, row in view.iterrows():
         if row["Item_Type"] == "Part":

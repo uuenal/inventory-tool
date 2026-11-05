@@ -138,7 +138,40 @@ def load_bom(file_path, mapping):
         item_types.append("Assembly" if is_assembly else "Part")
     out["Item_Type"] = item_types
 
+    # Windchill's "Quantity" is per IMMEDIATE parent, not per top-level
+    out["Quantity_Per_Unit"] = _rollup_quantity_per_unit(out["Level"].tolist(), out["Quantity_Per_Unit"].tolist())
+
     return out
+
+
+def _rollup_quantity_per_unit(levels, qty_per_parent):
+    """Cumulative quantity per ONE unit of the top-level assembly.
+
+    Windchill's exported "Quantity" is the quantity per immediate parent
+    occurrence, not already multiplied up to the top level - confirmed
+    against a real multi-level BOM export (an assembly used 2x in its
+    parent, whose own children each carry their per-that-assembly
+    quantity, not the doubled total). A part nested inside a sub-assembly
+    that is itself used N times must have its quantity multiplied by N,
+    and this compounds across however many nested levels sit in between.
+
+    Stack-based roll-up (same principle as the legacy script's qpu
+    calculation): each row's cumulative quantity = its own per-parent
+    quantity x the cumulative quantity of the nearest shallower ancestor
+    still on the stack. The top-level row (nothing shallower) is 1 unit.
+    """
+    n = len(levels)
+    qpu = [0.0] * n
+    stack = []  # row indices, kept so their levels increase bottom-to-top
+    for i in range(n):
+        while stack and levels[stack[-1]] >= levels[i]:
+            stack.pop()
+        if not stack:
+            qpu[i] = 1.0
+        else:
+            qpu[i] = (qty_per_parent[i] or 0.0) * qpu[stack[-1]]
+        stack.append(i)
+    return qpu
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +201,7 @@ def load_mapped_storage_source(file_path, source_cfg):
     col_key = _find_column(df.columns, source_cfg["columns"]["material_key"])
     col_qty = _find_column(df.columns, source_cfg["columns"]["quantity"])
     col_loc = _find_column(df.columns, source_cfg["columns"].get("location", []))
+    col_zeugnis = _find_column(df.columns, source_cfg["columns"].get("zeugnis_nr", []))
 
     if not col_key or not col_qty:
         raise ValueError(
@@ -183,6 +217,18 @@ def load_mapped_storage_source(file_path, source_cfg):
     })
     out["Source"] = source_cfg["label"]
     out["Material_Key"] = out["Material_Key_Raw"].apply(normalize_material_number)
+
+    # Dummy-material rows (e.g. SHIELD prototype stock parked under one
+    # shared SAP material number) carry their real part identity in the
+    # certificate-number column instead - use that as the match key for
+    # those rows only, direct material number for everything else.
+    dummy = source_cfg.get("dummy_material")
+    if dummy and col_zeugnis:
+        dummy = normalize_material_number(dummy)
+        zeugnis = df[col_zeugnis].astype(str).str.strip().apply(normalize_material_number)
+        is_dummy = out["Material_Key"] == dummy
+        out["Material_Key"] = out["Material_Key"].where(~is_dummy, zeugnis)
+
     out = out[(out["Material_Key"] != "") & (out["Quantity"] > 0)].reset_index(drop=True)
     return out[["Material_Key", "Quantity", "Location", "Source"]]
 
@@ -362,4 +408,58 @@ def load_order_list(file_path, mapping):
     out = out[out["Part_ID_Raw"] != ""].reset_index(drop=True)
     out["Material_Number"] = out["Part_ID_Raw"].apply(normalize_material_number)
     out["Zeugnis_Nr"] = out["Material_Number"].apply(lambda n: material_keys(n)["zeugnis_nr"])
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CSP Hall (external request/buffer-area log)
+# ---------------------------------------------------------------------------
+
+def load_csp_hall(file_path, mapping):
+    cfg = mapping["csp_hall"]
+    xl = pd.ExcelFile(file_path)
+    sheet = _pick_sheet(xl, cfg["sheet_name_candidates"])
+    raw = pd.read_excel(xl, sheet_name=sheet, header=None)
+
+    required_candidates = [cfg["columns"]["part_number"], cfg["columns"]["quantity"], cfg["columns"]["status"]]
+    header_row = _detect_header_row(raw, required_candidates)
+    if header_row is None:
+        raise ValueError(
+            f"CSP Hall file: could not find a header row with Part number/Qty/Status. "
+            f"Sheet used: '{sheet}' (available sheets: {xl.sheet_names}). "
+            f"First row in sheet: {raw.iloc[0].tolist() if len(raw) else '(empty)'}"
+        )
+
+    headers = _make_unique_headers(raw.iloc[header_row].tolist())
+    df = raw.iloc[header_row + 1:].copy()
+    df.columns = headers
+    df = df.reset_index(drop=True)
+
+    col_part = _find_column(df.columns, cfg["columns"]["part_number"])
+    col_qty = _find_column(df.columns, cfg["columns"]["quantity"])
+    col_status = _find_column(df.columns, cfg["columns"]["status"])
+    col_desc = _find_column(df.columns, cfg["columns"].get("description", []))
+    col_date = _find_column(df.columns, cfg["columns"].get("request_date", []))
+    col_note = _find_column(df.columns, cfg["columns"].get("note", []))
+
+    missing = [name for name, col in [
+        ("part_number", col_part), ("quantity", col_qty), ("status", col_status)
+    ] if col is None]
+    if missing:
+        raise ValueError(
+            f"CSP Hall file: required columns not found: {missing}. "
+            f"Sheet used: '{sheet}', header row: {header_row + 1}. "
+            f"Columns found: {list(df.columns)}"
+        )
+
+    out = pd.DataFrame({
+        "Material_Number_Raw": df[col_part].astype(str).str.strip(),
+        "Quantity": pd.to_numeric(df[col_qty], errors="coerce").fillna(0),
+        "Status": df[col_status].astype(str).str.strip(),
+        "Description": df[col_desc].astype(str).str.strip() if col_desc else "",
+        "Request_Date": df[col_date] if col_date else "",
+        "Note": df[col_note].astype(str).str.strip() if col_note else "",
+    })
+    out["Material_Number"] = out["Material_Number_Raw"].apply(normalize_material_number)
+    out = out[out["Material_Number"] != ""].reset_index(drop=True)
     return out

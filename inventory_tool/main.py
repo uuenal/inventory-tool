@@ -96,9 +96,11 @@ def run():
     print("  1) BOM (Windchill export)")
     print("  2) SAP stock list")
     print("  3) Order list")
-    bom_file = ask_for_file("1/3: Select BOM file (Windchill export)")
-    sap_file = ask_for_file("2/3: Select SAP stock list")
-    order_file = ask_for_file("3/3: Select order list")
+    print("  4) CSP Hall file (Cancel = skip, shown as an informational column only)")
+    bom_file = ask_for_file("1/4: Select BOM file (Windchill export)")
+    sap_file = ask_for_file("2/4: Select SAP stock list")
+    order_file = ask_for_file("3/4: Select order list")
+    csp_file = ask_for_file("4/4: Select CSP Hall file (Cancel to skip)", required=False)
 
     print("\nStep 2/4: Additional storage sources (optional, 'Cancel' to skip)")
     extra_stock_frames, extra_used, extra_skipped = load_optional_storage_sources(mapping)
@@ -110,6 +112,12 @@ def run():
     sap_cfg = next(s for s in mapping["storage_sources"] if s["id"] == "sap")
     sap_df = loaders.load_mapped_storage_source(sap_file, sap_cfg)
     order_df = loaders.load_order_list(order_file, mapping)
+    csp_df = None
+    if csp_file:
+        try:
+            csp_df = loaders.load_csp_hall(csp_file, mapping)
+        except ValueError as exc:
+            print(f"WARNING: CSP Hall file skipped: {exc}")
 
     # Per-BOM-row order context first (which rows are ordered, which sit
     # underneath an assembly delivered as a complete unit) - demand
@@ -122,7 +130,10 @@ def run():
     avail_df = availability.compute_availability(demand_df, stock_df)
     avail_df = availability.attach_kanban(avail_df, order_df)
     avail_df = availability.enrich_gaps_with_order_list(avail_df, order_df)
-    bom_view = availability.build_bom_view(bom_df, avail_df, stock_df=stock_df, sap_label=sap_cfg["label"])
+    csp_summary = availability.summarize_csp_hall(csp_df)
+    bom_view = availability.build_bom_view(
+        bom_df, avail_df, stock_df=stock_df, sap_label=sap_cfg["label"], csp_summary=csp_summary
+    )
     gap_df = avail_df[avail_df["Gap"] > 0].sort_values(
         by=["Critical", "Status"], ascending=[False, True]
     ).reset_index(drop=True)
@@ -131,6 +142,10 @@ def run():
     if len(decms_df) > 0:
         sources_used.append("DECMS (order list, main warehouse)")
     sources_skipped = extra_skipped
+    if csp_df is not None:
+        sources_used.append("CSP Hall")
+    else:
+        sources_skipped = sources_skipped + ["CSP Hall"]
 
     print("\nStep 4/4: Generating report...")
     output_dir = os.path.dirname(bom_file)

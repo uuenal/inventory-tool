@@ -36,15 +36,44 @@ order_list:
   # availability calculation.
   demand_per_unit_label_prefix: "Phase 1"
 
+csp_hall:
+  # The external "SHIELD_CSP_Hall.xlsx" master log: material already
+  # requested from / brought to the CSP Hall buffer area. Status values
+  # (confirmed from a real export): "In CSP Hall" (physically there),
+  # "Requested" (request sent, not yet confirmed by the warehouse),
+  # "Kanban self-pick", "Cancelled". Only "In CSP Hall" counts toward
+  # availability; the others are informational only (see
+  # availability.summarize_csp_hall).
+  sheet_name_candidates: []
+  columns:
+    request_date: ["Request date"]
+    part_number: ["Part number"]
+    description: ["Description"]
+    quantity: ["Qty"]
+    status: ["Status"]
+    requested_as: ["Requested as"]
+    storage_bin: ["Storage bin"]
+    note: ["Note"]
+
 storage_sources:
   - id: sap
     label: "SAP Stock"
     required: true
     sheet_name_candidates: ["Sheet1"]
+    # SHIELD prototype stock sits entirely under one shared "dummy"
+    # material number in SAP (LX02, warehouse 240); for THOSE rows only,
+    # the real part identity is in "Zeugnis-Nr" (certificate no., last 10
+    # characters of the real material number) and matching must use that
+    # column instead. Every other (normal/catalogue) row is matched
+    # directly by its own material number - confirmed against a real
+    # LX02 export: ~75% of materials never have Zeugnis-Nr populated at
+    # all, so using it as a blanket key would silently drop their stock.
+    dummy_material: "GCE1093120P0111"
     columns:
-      material_key: ["Zeugnis-Nr"]
-      quantity: ["Gesamtbestand"]
-      location: ["Lagerplatz"]
+      material_key: ["Material"]
+      zeugnis_nr: ["Zeugnis-Nr"]
+      quantity: ["Verfügbarer Bestand", "Available stock", "Gesamtbestand"]
+      location: ["Lagerplatz", "Storage Bin"]
   # Additional storage sources (to follow later): no fixed mapping yet.
   # Detected on load via generic column heuristics (see
   # loaders.load_generic_storage_source) and to be filled in here once
