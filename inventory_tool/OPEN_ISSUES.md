@@ -26,6 +26,21 @@ branch of the BOM), PLUS an informational hint on each line showing "this
 material is also needed elsewhere in the full BOM, total X" so the user
 doesn't have to manually remember/track that for a later, separate request.
 
+Additional requirement (confirms the direction above, adds detail): the
+outsourcing email itself only ever needs 4 fields - material number,
+description, quantity, storage location. Today the user has to manually
+hide columns and copy just that slice out of a much wider report table
+every time, which is repetitive busywork. The request view should
+generate exactly that minimal set directly, scoped to the chosen
+sub-assembly, so no manual column-hiding/copying is needed.
+
+Preferred flow (matches the colleague's existing two-step design - worth
+keeping rather than collapsing to one click): (1) generate/stage the
+minimal-fields request as a reviewable table in Excel first (easier to
+check "is everything right" in a table than inside an email body), (2) a
+separate, explicit action turns the reviewed staged table into the actual
+email draft. Not a one-click "pick sub-assembly -> email sent" flow.
+
 ### 2. Persistent working file - manual comments/status must survive refreshes
 
 Currently every report run creates a brand new Excel file, so any manual
